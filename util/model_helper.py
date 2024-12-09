@@ -6,6 +6,8 @@ import torch.nn as nn
 from collections.abc import Mapping
 import cv2
 import numpy as np
+from ngp.gridencoder import GridEncoder
+from ngp.ffmlp import FMLP
 
 class ModelHelper(nn.Module):
     """Build model from cfg"""
@@ -30,10 +32,17 @@ class ModelHelper(nn.Module):
             break
 
     def build(self, mtype, kwargs):
-        module_name, cls_name = mtype.rsplit(".", 1)
-        module = importlib.import_module(module_name)
-        cls = getattr(module, cls_name)
-        return cls(**kwargs)
+        if mtype == "torch_ngp.GridEncoder":
+            from ngp.gridencoder import GridEncoder
+            return GridEncoder(**kwargs)
+        elif mtype == "torch_ngp.FMLP":
+            from ngp.ffmlp import FMLP
+            return FMLP(**kwargs)
+        else:
+            module_name, cls_name = mtype.rsplit(".", 1)
+            module = importlib.import_module(module_name)
+            cls = getattr(module, cls_name)
+            return cls(**kwargs)
 
     def cuda(self):
         self.device = torch.device("cuda")
@@ -46,14 +55,18 @@ class ModelHelper(nn.Module):
     def forward(self, input):
         input = copy.copy(input)
         if input.device != self.device:
-            # input = to_device(input, device=self.device)
-            input=input.cuda()
+            input = input.to(self.device)
+        
         for submodule in self.children():
-            output = submodule(input)
-            # input.update(output)
-        feat=[]
-        size=(224,224)
-        return output['features']
+            if isinstance(submodule, GridEncoder):
+                input = submodule(input)  # Encode input with GridEncoder
+            elif isinstance(submodule, FMLP):
+                input = submodule(input)  # Process encoded input with FMLP
+            else:
+                input = submodule(input)  # Process with other submodules
+
+        return input  # Return the processed result
+
 
     def freeze_layer(self, module):
         module.eval()

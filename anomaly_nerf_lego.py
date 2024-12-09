@@ -18,6 +18,9 @@ from util.nerf_helpers import load_nerf
 from util.render_helpers import get_rays, render, to8b
 from util.utils import (config_parser, find_POI,
                    img2mse, load_blender_ad,pose_retrieval_loftr)
+from ngp.gridencoder import GridEncoder
+from ngp.ffmlp import FMLP
+from ngp.raymarching import render_rays
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -94,12 +97,21 @@ def run():
             not_POI = np.array([list(point) for point in not_POI]).astype(int)
 
             # Load NeRF Model
-            render_kwargs = load_nerf(args, device)
-            bds_dict = {
+            grid_encoder = GridEncoder(input_dim=3, level=16, per_level_scale=2.0).to(device)
+            model = FMLP(input_dim=grid_encoder.output_dim, hidden_dim=256, output_dim=4).to(device)
+
+            render_kwargs = {
+                'model': model,
+                'grid_encoder': grid_encoder,
+                'chunk': args.chunk,
+                'perturb': args.perturb,
+                'N_samples': args.N_samples,
+                'N_importance': args.N_importance,
+                'white_bkgd': args.white_bkgd,
+                'raw_noise_std': args.raw_noise_std,
                 'near': near,
                 'far': far,
             }
-            render_kwargs.update(bds_dict)
 
             # Create pose transformation model
             start_pose = torch.Tensor(start_pose).to(device)
@@ -147,15 +159,15 @@ def run():
                 # import pdb;pdb.set_trace()
                 pose = cam_transf(start_pose)
 
-                rays_o, rays_d = get_rays(
-                    H, W, focal, pose)  # (H, W, 3), (H, W, 3)
-                rays_o = rays_o[batch[:, 1], batch[:, 0]]  # (N_rand, 3)
+                rays_o, rays_d = get_rays(H, W, focal, pose)
+                rays_o = rays_o[batch[:, 1], batch[:, 0]]
                 rays_d = rays_d[batch[:, 1], batch[:, 0]]
-                batch_rays = torch.stack([rays_o, rays_d], 0)
+                batch_rays = torch.stack([rays_o, rays_d], dim=-1)
 
-                rgb, disp, acc, extras = render(H, W, focal, chunk=args.chunk, rays=batch_rays,
-                                                verbose=k < 10, retraw=True,
-                                                **render_kwargs)
+                coords_encoded = render_kwargs['grid_encoder'](batch_rays)
+                rgb, disp, acc, extras = render_rays(
+                    render_kwargs['model'], coords_encoded, render_kwargs['grid_encoder'], chunk=args.chunk
+                )
 
                 optimizer.zero_grad()
                 loss = img2mse(rgb, target_s)

@@ -9,7 +9,7 @@ tqdm
 opencv-python
 opencv-contrib-python
 scikit-image
-sklearn
+scikit-learn
 numpy
 lpips
 einops
