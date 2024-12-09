@@ -19,3 +19,4 @@ easydict
 importlib
 efficientnet_pytorch
 gdown
+ninja
